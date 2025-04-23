@@ -1,4 +1,3 @@
-# main.py
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,15 +5,29 @@ from discord.ui import View, Button
 import random
 import json
 import os
+from flask import Flask
 
+# Lấy cổng từ biến môi trường (Render cung cấp cổng qua PORT)
+PORT = os.getenv("PORT", 10000)  # Nếu không có biến môi trường, mặc định là 10000
+
+# Tạo Flask app để lắng nghe cổng
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running."
+
+# Lấy Token và Guild ID từ biến môi trường
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
 
+# Cấu hình bot Discord
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
+# Lưu và tải dữ liệu sự kiện
 DATA_FILE = "events.json"
 events = {}
 
@@ -30,12 +43,14 @@ def save_events():
 
 ROLE_PREFIX = "V"
 
+# Hàm lấy số lượng số tối đa mà một người có thể chọn dựa vào role
 def get_max_entries(member: discord.Member) -> int:
     for i in range(10, 0, -1):
         if discord.utils.get(member.roles, name=f"{ROLE_PREFIX}{i}"):
             return i
     return 0
 
+# Event khi bot sẵn sàng
 @bot.event
 async def on_ready():
     load_events()
@@ -130,109 +145,10 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     save_events()
     await interaction.response.send_message(f"🚫 Đã hủy sự kiện `{event_name}`.", ephemeral=False)
 
-# Thêm UI và phân trang sau
-class NumberSelectView(View):
-    def __init__(self, interaction, event_name, available_numbers, max_per_user, user_id, page=0):
-        super().__init__(timeout=60)
-        self.interaction = interaction
-        self.event_name = event_name
-        self.available_numbers = available_numbers
-        self.max_per_user = max_per_user
-        self.user_id = user_id
-        self.page = page
-        self.per_page = 25
+# Chạy Flask server trên cổng 10000
+@app.before_first_request
+def before_first_request():
+    bot.loop.create_task(bot.start(TOKEN))
 
-        start = page * self.per_page
-        end = start + self.per_page
-        current_page_numbers = self.available_numbers[start:end]
-
-        for number in current_page_numbers:
-            self.add_item(Button(label=str(number), custom_id=f"choose:{number}"))
-
-        if page > 0:
-            self.add_item(Button(label="⬅️ Trang trước", custom_id="prev"))
-        if end < len(available_numbers):
-            self.add_item(Button(label="➡️ Trang sau", custom_id="next"))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.user_id
-
-    @discord.ui.button(label="⏹ Hủy", style=discord.ButtonStyle.red, custom_id="cancel")
-    async def cancel_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.message.delete()
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
-        await interaction.response.send_message("⚠️ Đã có lỗi xảy ra.", ephemeral=True)
-
-@bot.tree.command(name="choose_number", description="Chọn số với giao diện nút")
-@app_commands.describe(event_name="Tên sự kiện")
-async def choose_number(interaction: discord.Interaction, event_name: str):
-    member = interaction.user
-    if event_name not in events:
-        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
-        return
-    max_allowed = get_max_entries(member)
-    if max_allowed == 0:
-        await interaction.response.send_message("❌ Bạn không có role V1–V10.", ephemeral=False)
-        return
-
-    event = events[event_name]
-    your_entries = event["entries"].get(str(member.id), [])
-    if len(your_entries) >= max_allowed:
-        await interaction.response.send_message("❌ Bạn đã chọn đủ số lượng.", ephemeral=False)
-        return
-
-    all_taken = [n for v in event["entries"].values() for n in v]
-    available = [i for i in range(1, 101) if i not in all_taken]
-
-    if not available:
-        await interaction.response.send_message("⚠️ Không còn số nào trống.", ephemeral=False)
-        return
-
-    view = NumberSelectView(interaction, event_name, available, max_allowed, member.id)
-    await interaction.response.send_message(f"🎯 Chọn số cho sự kiện `{event_name}`:", view=view, ephemeral=False)
-
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.type == discord.InteractionType.component:
-        if interaction.data["custom_id"].startswith("choose:"):
-            number = int(interaction.data["custom_id"].split(":")[1])
-            user_id = str(interaction.user.id)
-            event_name = None
-
-            # Tìm event mà interaction đang xử lý
-            for name, ev in events.items():
-                entries = ev["entries"].get(user_id, [])
-                all_taken = [n for v in ev["entries"].values() for n in v]
-                if number not in all_taken and len(entries) < get_max_entries(interaction.user):
-                    event_name = name
-                    break
-
-            if not event_name:
-                await interaction.response.send_message("❌ Không thể chọn số này.", ephemeral=True)
-                return
-
-            events[event_name]["entries"].setdefault(user_id, []).append(number)
-            save_events()
-            await interaction.response.send_message(f"✅ Bạn đã chọn số `{number}`!", ephemeral=False)
-            return
-
-        elif interaction.data["custom_id"] == "next" or interaction.data["custom_id"] == "prev":
-            message = interaction.message
-            embed = message.embeds[0] if message.embeds else None
-            content = message.content
-            lines = content.split("`")
-            if len(lines) < 2:
-                return
-            event_name = lines[1]
-            member = interaction.user
-            max_allowed = get_max_entries(member)
-            all_taken = [n for v in events[event_name]["entries"].values() for n in v]
-            available = [i for i in range(1, 101) if i not in all_taken]
-            current_page = int(message.components[0].children[0].custom_id.split(":")[1])
-            new_page = current_page + 1 if interaction.data["custom_id"] == "next" else current_page - 1
-
-            view = NumberSelectView(interaction, event_name, available, max_allowed, member.id, new_page)
-            await interaction.response.edit_message(view=view)
-
-bot.run(TOKEN)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT)

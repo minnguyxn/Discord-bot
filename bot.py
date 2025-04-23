@@ -92,9 +92,9 @@ async def on_ready():
 @bot.tree.command(name="tao_sukien", description="Tạo sự kiện bốc thăm", guild=discord.Object(id=int(GUILD_ID)))
 @app_commands.describe(ten_sukien="Tên sự kiện", so_phieu="Số phiếu")
 async def tao_sukien(interaction: Interaction, ten_sukien: str, so_phieu: int):
-    if interaction.user != interaction.channel.owner:
-        await interaction.response.send_message("❌ Chỉ chủ kênh mới có quyền tạo sự kiện.", ephemeral=True)
-        return
+  #  if interaction.user != interaction.channel.owner:
+   #     await interaction.response.send_message("❌ Chỉ chủ kênh mới có quyền tạo sự kiện.", ephemeral=True)
+    #    return
 
     tickets = list(range(1, so_phieu + 1))
     prizes = {

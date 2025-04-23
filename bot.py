@@ -53,7 +53,7 @@ class DrawView(ui.View):
         uid = str(interaction.user.id)
 
         if uid not in event["participants"]:
-            await interaction.response.send_message("❌ You have not registered for the event!", ephemeral=True)
+            await interaction.response.send_message("❌ You haven't registered yet!", ephemeral=True)
             return
 
         p = event["participants"][uid]
@@ -62,7 +62,7 @@ class DrawView(ui.View):
             return
 
         if not event["tickets"]:
-            await interaction.response.send_message("❌ No tickets left to draw!", ephemeral=True)
+            await interaction.response.send_message("❌ No tickets left!", ephemeral=True)
             return
 
         ticket = random.choice(event["tickets"])
@@ -74,16 +74,11 @@ class DrawView(ui.View):
         save_event(event)
 
         if prize:
-            result = f"🎉 You have drawn ticket **{ticket}** and won **{prize}**!"
+            result = f"🎉 **{interaction.user.mention}** drew ticket **#{ticket}** and won **{prize}**!"
         else:
-            result = f"You have drawn ticket **{ticket}** — no prize this time 😢"
+            result = f"🎲 **{interaction.user.mention}** drew ticket **#{ticket}** but did not win."
 
-        # Public announcement to all participants
-        for participant_id in event["participants"]:
-            member = await interaction.guild.fetch_member(int(participant_id))
-            await member.send(f"📣 {interaction.user.name} has drawn ticket **{ticket}**. Result: {result}")
-
-        await interaction.response.send_message(result, ephemeral=True)
+        await interaction.response.send_message(result) 
 
 @bot.event
 async def on_ready():

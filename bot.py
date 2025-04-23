@@ -125,6 +125,52 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     del events[event_name]
     save_events()
     await interaction.response.send_message(f"🚫 Đã hủy sự kiện `{event_name}`.", ephemeral=False)
+    
+@bot.tree.command(name="add_mem", description="MOD thêm người vào sự kiện")
+@app_commands.describe(event_name="Tên sự kiện", user="Người cần thêm", numbers="Các số, cách nhau bởi dấu cách (VD: 12 15 99)")
+async def add_mem(interaction: discord.Interaction, event_name: str, user: discord.Member, numbers: str):
+    # Kiểm tra role MOD
+    if not discord.utils.get(interaction.user.roles, name="MOD"):
+        await interaction.response.send_message("❌ Bạn không có quyền dùng lệnh này (cần role MOD).", ephemeral=False)
+        return
+
+    if event_name not in events:
+        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
+        return
+
+    number_list = []
+    try:
+        number_list = list(map(int, numbers.split()))
+    except ValueError:
+        await interaction.response.send_message("❌ Danh sách số không hợp lệ (chỉ dùng số, cách nhau bằng dấu cách).", ephemeral=False)
+        return
+
+    max_allowed = get_max_entries(user)
+    if max_allowed == 0:
+        await interaction.response.send_message("❌ Người này không có role phù hợp (V1–V10).", ephemeral=False)
+        return
+
+    current_entries = events[event_name]["entries"].setdefault(str(user.id), [])
+    total_after_add = len(current_entries) + len(number_list)
+
+    if total_after_add > max_allowed:
+        await interaction.response.send_message(
+            f"❌ Người dùng này chỉ được chọn {max_allowed} số. Hiện tại đã chọn {len(current_entries)}, chỉ thêm được {max_allowed - len(current_entries)} số.",
+            ephemeral=False)
+        return
+
+    # Kiểm tra trùng lặp với người khác
+    all_chosen = [n for uid, nums in events[event_name]["entries"].items() for n in nums]
+    for n in number_list:
+        if n in all_chosen:
+            await interaction.response.send_message(f"❌ Số `{n}` đã được chọn bởi người khác.", ephemeral=False)
+            return
+
+    # Thêm số
+    current_entries.extend(number_list)
+    save_events()
+    await interaction.response.send_message(f"✅ Đã thêm {user.mention} với các số: {', '.join(map(str, number_list))}", ephemeral=False)
+
 
 # Khởi chạy bot
 if __name__ == "__main__":

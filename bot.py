@@ -43,26 +43,26 @@ class DrawView(ui.View):
         super().__init__(timeout=None)
         self.user_id = user_id
 
-    @ui.button(label="🎲 Rút Phiếu", style=discord.ButtonStyle.green)
+    @ui.button(label="🎲 Draw Ticket", style=discord.ButtonStyle.green)
     async def draw(self, interaction: Interaction, button: ui.Button):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Bạn không được phép rút phiếu tại đây!", ephemeral=True)
+            await interaction.response.send_message("❌ You are not allowed to draw here!", ephemeral=True)
             return
 
         event = load_event()
         uid = str(interaction.user.id)
 
         if uid not in event["participants"]:
-            await interaction.response.send_message("❌ Bạn chưa đăng ký tham gia!", ephemeral=True)
+            await interaction.response.send_message("❌ You have not registered for the event!", ephemeral=True)
             return
 
         p = event["participants"][uid]
         if p["draws_left"] <= 0:
-            await interaction.response.send_message("⚠️ Bạn đã hết lượt rút!", ephemeral=True)
+            await interaction.response.send_message("⚠️ You have no draws left!", ephemeral=True)
             return
 
         if not event["tickets"]:
-            await interaction.response.send_message("❌ Hết phiếu để rút!", ephemeral=True)
+            await interaction.response.send_message("❌ No tickets left to draw!", ephemeral=True)
             return
 
         ticket = random.choice(event["tickets"])
@@ -74,9 +74,14 @@ class DrawView(ui.View):
         save_event(event)
 
         if prize:
-            result = f"🎉 Bạn đã rút được **phiếu {ticket}** và trúng **{prize}**!"
+            result = f"🎉 You have drawn ticket **{ticket}** and won **{prize}**!"
         else:
-            result = f"Bạn đã rút phiếu **{ticket}** — không trúng giải 😢"
+            result = f"You have drawn ticket **{ticket}** — no prize this time 😢"
+
+        # Public announcement to all participants
+        for participant_id in event["participants"]:
+            member = await interaction.guild.fetch_member(int(participant_id))
+            await member.send(f"📣 {interaction.user.name} has drawn ticket **{ticket}**. Result: {result}")
 
         await interaction.response.send_message(result, ephemeral=True)
 
@@ -89,45 +94,41 @@ async def on_ready():
     except Exception as e:
         print("Sync error:", e)
 
-@bot.tree.command(name="tao_sukien", description="Tạo sự kiện bốc thăm", guild=discord.Object(id=int(GUILD_ID)))
-@app_commands.describe(ten_sukien="Tên sự kiện", so_phieu="Số phiếu")
-async def tao_sukien(interaction: Interaction, ten_sukien: str, so_phieu: int):
-  #  if interaction.user != interaction.channel.owner:
-   #     await interaction.response.send_message("❌ Chỉ chủ kênh mới có quyền tạo sự kiện.", ephemeral=True)
-    #    return
-
-    tickets = list(range(1, so_phieu + 1))
+@bot.tree.command(name="create_event", description="Create a lucky draw event", guild=discord.Object(id=int(GUILD_ID)))
+@app_commands.describe(event_name="Event name", number_of_tickets="Number of tickets")
+async def create_event(interaction: Interaction, event_name: str, number_of_tickets: int):
+    tickets = list(range(1, number_of_tickets + 1))
     prizes = {
-        "1": "🎁 Giải Nhất",
-        "2": "🥈 Giải Nhì",
-        "3": "🥉 Giải Ba"
+        "1": "🎁 First Prize",
+        "2": "🥈 Second Prize",
+        "3": "🥉 Third Prize"
     }
 
     event = {
-        "event_name": ten_sukien,
-        "max_tickets": so_phieu,
+        "event_name": event_name,
+        "max_tickets": number_of_tickets,
         "tickets": tickets,
         "participants": {},
         "prizes": prizes
     }
     save_event(event)
-    await interaction.response.send_message(f"✅ Đã tạo sự kiện **{ten_sukien}** với {so_phieu} phiếu.")
+    await interaction.response.send_message(f"✅ Event **{event_name}** created with {number_of_tickets} tickets.")
 
-@bot.tree.command(name="dangky", description="Đăng ký tham gia", guild=discord.Object(id=int(GUILD_ID)))
-async def dangky(interaction: Interaction):
+@bot.tree.command(name="register", description="Register for the event", guild=discord.Object(id=int(GUILD_ID)))
+async def register(interaction: Interaction):
     event = load_event()
     if not event:
-        await interaction.response.send_message("❌ Chưa có sự kiện nào được tạo.", ephemeral=True)
+        await interaction.response.send_message("❌ No event has been created yet.", ephemeral=True)
         return
 
     uid = str(interaction.user.id)
     if uid in event["participants"]:
-        await interaction.response.send_message("⚠️ Bạn đã đăng ký rồi!", ephemeral=True)
+        await interaction.response.send_message("⚠️ You have already registered!", ephemeral=True)
         return
 
     draws = get_draws_from_roles(interaction.user)
     if draws == 0:
-        await interaction.response.send_message("❌ Bạn không có role hợp lệ (V1–V10)!", ephemeral=True)
+        await interaction.response.send_message("❌ You do not have a valid role (V1–V10)!", ephemeral=True)
         return
 
     event["participants"][uid] = {
@@ -138,9 +139,20 @@ async def dangky(interaction: Interaction):
     save_event(event)
 
     await interaction.response.send_message(
-        f"✅ Đăng ký thành công! Bạn có {draws} lượt rút.",
+        f"✅ You have successfully registered! You have {draws} draws.",
         view=DrawView(interaction.user.id),
         ephemeral=True
     )
+
+# Cancel event command
+@bot.tree.command(name="cancel_event", description="Cancel the current event", guild=discord.Object(id=int(GUILD_ID)))
+async def cancel_event(interaction: Interaction):
+    event = load_event()
+    if not event:
+        await interaction.response.send_message("❌ No event to cancel.", ephemeral=True)
+        return
+
+    os.remove(EVENT_FILE)
+    await interaction.response.send_message("✅ The event has been canceled.", ephemeral=True)
 
 bot.run(TOKEN)

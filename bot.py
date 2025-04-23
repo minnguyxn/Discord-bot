@@ -1,35 +1,21 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from discord.ui import View, Button
 import random
 import json
 import os
-from flask import Flask
 
-# Lấy cổng từ biến môi trường (Render cung cấp cổng qua PORT)
-PORT = os.getenv("PORT", 10000)  # Nếu không có biến môi trường, mặc định là 10000
-
-# Tạo Flask app để lắng nghe cổng
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running."
-
-# Lấy Token và Guild ID từ biến môi trường
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
 
-# Cấu hình bot Discord
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Lưu và tải dữ liệu sự kiện
 DATA_FILE = "events.json"
 events = {}
+ROLE_PREFIX = "V"
 
 def load_events():
     global events
@@ -41,23 +27,18 @@ def save_events():
     with open(DATA_FILE, "w") as f:
         json.dump(events, f)
 
-ROLE_PREFIX = "V"
-
-# Hàm lấy số lượng số tối đa mà một người có thể chọn dựa vào role
 def get_max_entries(member: discord.Member) -> int:
     for i in range(10, 0, -1):
         if discord.utils.get(member.roles, name=f"{ROLE_PREFIX}{i}"):
             return i
     return 0
 
-# Event khi bot sẵn sàng
 @bot.event
 async def on_ready():
     load_events()
     await bot.tree.sync()
     print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
 
-# Slash Commands
 @bot.tree.command(name="create_event", description="Tạo sự kiện chọn số may mắn")
 @app_commands.describe(event_name="Tên sự kiện", num_winners="Số người thắng")
 async def create_event(interaction: discord.Interaction, event_name: str, num_winners: int):
@@ -145,10 +126,6 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     save_events()
     await interaction.response.send_message(f"🚫 Đã hủy sự kiện `{event_name}`.", ephemeral=False)
 
-# Chạy Flask server trên cổng 10000
-@app.before_first_request
-def before_first_request():
-    bot.loop.create_task(bot.start(TOKEN))
-
+# Khởi chạy bot
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    bot.run(TOKEN)

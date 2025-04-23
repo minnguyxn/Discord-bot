@@ -1,168 +1,189 @@
 import discord
 from discord.ext import commands
-from discord import app_commands, ui, Interaction
+from discord import app_commands
+import random
 import json
 import os
-import random
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
 
 intents = discord.Intents.default()
+intents.guilds = True
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
-EVENT_FILE = 'lucky_event.json'
+DATA_FILE = "events.json"
+events = {}
 ROLE_PREFIX = "V"
-MAX_ROLE_LEVEL = 10
 
-def load_event():
-    if not os.path.exists(EVENT_FILE):
-        return None
-    with open(EVENT_FILE, 'r') as f:
-        return json.load(f)
+def load_events():
+    global events
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            events = json.load(f)
 
-def save_event(data):
-    with open(EVENT_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
+def save_events():
+    with open(DATA_FILE, "w") as f:
+        json.dump(events, f)
 
-def get_draws_from_roles(member):
-    max_draws = 0
-    for role in member.roles:
-        if role.name.upper().startswith(ROLE_PREFIX):
-            try:
-                level = int(role.name.upper().replace(ROLE_PREFIX, ""))
-                if 1 <= level <= MAX_ROLE_LEVEL:
-                    max_draws = max(max_draws, level)
-            except:
-                continue
-    return max_draws
-
-class DrawView(ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=None)
-        self.user_id = user_id
-
-    @ui.button(label="🎲 Draw Ticket", style=discord.ButtonStyle.green)
-    async def draw(self, interaction: Interaction, button: ui.Button):
-        event = load_event()
-        uid = str(interaction.user.id)
-
-        if uid not in event["participants"]:
-            await interaction.response.send_message("❌ You are not registered!", ephemeral=False)
-            return
-
-        p = event["participants"][uid]
-        if p["draws_left"] <= 0:
-            await interaction.response.send_message("⚠️ No more draws left!", ephemeral=False)
-            return
-
-        if not event["tickets"]:
-            await interaction.response.send_message("❌ No more tickets!", ephemeral=False)
-            return
-
-        ticket = random.choice(event["tickets"])
-        event["tickets"].remove(ticket)
-        p["tickets"].append(ticket)
-        p["draws_left"] -= 1
-
-        prize = event["prizes"].get(str(ticket), None)
-        save_event(event)
-
-        if prize:
-            result = f"🎉 {interaction.user.mention} drew ticket **{ticket}** and won **{prize}**!"
-        else:
-            result = f"{interaction.user.mention} drew ticket **{ticket}** — no prize 😢"
-
-        await interaction.channel.send(result)
+def get_max_entries(member: discord.Member) -> int:
+    for i in range(10, 0, -1):
+        if discord.utils.get(member.roles, name=f"{ROLE_PREFIX}{i}"):
+            return i
+    return 0
 
 @bot.event
 async def on_ready():
-    print(f"Bot is online: {bot.user}")
+    load_events()
+    await bot.tree.sync()
+    print(f"✅ Bot is ready as {bot.user}")
+
+@bot.tree.command(name="create_event", description="Create a lucky number event")
+@app_commands.describe(event_name="Event name", num_winners="Number of winners")
+async def create_event(interaction: discord.Interaction, event_name: str, num_winners: int):
+    if event_name in events:
+        await interaction.response.send_message(f"❌ Event `{event_name}` already exists.", ephemeral=False)
+        return
+    events[event_name] = {
+        "creator": interaction.user.id,
+        "num_winners": num_winners,
+        "entries": {}
+    }
+    save_events()
+    await interaction.response.send_message(f"🎉 Created event `{event_name}` with {num_winners} winners!", ephemeral=False)
+
+@bot.tree.command(name="register", description="Register numbers for an event")
+@app_commands.describe(event_name="Event name", number="Your chosen number")
+async def register(interaction: discord.Interaction, event_name: str, number: int):
+    member = interaction.user
+    if event_name not in events:
+        await interaction.response.send_message("❌ Event not found.", ephemeral=False)
+        return
+    max_allowed = get_max_entries(member)
+    if max_allowed == 0:
+        await interaction.response.send_message("❌ You don't have a valid role (V1–V10).", ephemeral=False)
+        return
+    event = events[event_name]
+    entries = event["entries"].setdefault(str(member.id), [])
+    if number in [n for e in event["entries"].values() for n in e]:
+        await interaction.response.send_message("❌ This number is already taken.", ephemeral=False)
+        return
+    if len(entries) >= max_allowed:
+        await interaction.response.send_message(f"❌ You can only pick {max_allowed} numbers.", ephemeral=False)
+        return
+    entries.append(number)
+    save_events()
+    await interaction.response.send_message(f"✅ {member.mention} picked number `{number}`!", ephemeral=False)
+
+@bot.tree.command(name="list_entries", description="Show list of participants")
+@app_commands.describe(event_name="Event name")
+async def list_entries(interaction: discord.Interaction, event_name: str):
+    if event_name not in events:
+        await interaction.response.send_message("❌ Event not found.", ephemeral=False)
+        return
+    event = events[event_name]
+    if not event["entries"]:
+        await interaction.response.send_message(f"📭 No entries in event `{event_name}` yet.", ephemeral=False)
+        return
+
+    result = ""
+    for uid, nums in event["entries"].items():
+        if uid.startswith("custom:"):
+            display_name = uid[len("custom:"):]
+        else:
+            try:
+                member = await interaction.guild.fetch_member(int(uid))
+                display_name = member.mention
+            except:
+                display_name = f"Unknown User ({uid})"
+        numbers = ", ".join(str(n) for n in nums)
+        result += f"- {display_name}: {numbers}\n"
+
+    await interaction.response.send_message(f"📋 Participants in `{event_name}`:\n{result}", ephemeral=False)
+
+@bot.tree.command(name="draw_winners", description="Draw winners from an event")
+@app_commands.describe(event_name="Event name")
+async def draw_winners(interaction: discord.Interaction, event_name: str):
+    if event_name not in events:
+        await interaction.response.send_message("❌ Event not found.", ephemeral=False)
+        return
+    event = events[event_name]
+    if interaction.user.id != event["creator"]:
+        await interaction.response.send_message("❌ Only the creator can draw winners.", ephemeral=False)
+        return
+    all_entries = [(uid, num) for uid, nums in event["entries"].items() for num in nums]
+    if len(all_entries) < event["num_winners"]:
+        await interaction.response.send_message("❌ Not enough entries to draw winners.", ephemeral=False)
+        return
+    winners = random.sample(all_entries, event["num_winners"])
+    result = "\n".join([f"<@{uid}>" if not uid.startswith("custom:") else uid[7:] + f" (custom)" + f" with number `{num}`" for uid, num in winners])
+    await interaction.response.send_message(f"🏆 **Winners of `{event_name}`:**\n{result}", ephemeral=False)
+    del events[event_name]
+    save_events()
+
+@bot.tree.command(name="cancel_event", description="Cancel an event")
+@app_commands.describe(event_name="Event name")
+async def cancel_event(interaction: discord.Interaction, event_name: str):
+    if event_name not in events:
+        await interaction.response.send_message("❌ Event not found.", ephemeral=False)
+        return
+    if interaction.user.id != events[event_name]["creator"]:
+        await interaction.response.send_message("❌ Only the creator can cancel the event.", ephemeral=False)
+        return
+    del events[event_name]
+    save_events()
+    await interaction.response.send_message(f"🚫 Event `{event_name}` has been cancelled.", ephemeral=False)
+
+@bot.tree.command(name="add_mem", description="MOD: Add external user to an event")
+@app_commands.describe(event_name="Event name", identifier="User ID or custom name", numbers="Numbers separated by space")
+async def add_mem(interaction: discord.Interaction, event_name: str, identifier: str, numbers: str):
+    if not discord.utils.get(interaction.user.roles, name="MOD"):
+        await interaction.response.send_message("❌ You don't have permission to use this command (requires MOD role).", ephemeral=False)
+        return
+    if event_name not in events:
+        await interaction.response.send_message("❌ Event not found.", ephemeral=False)
+        return
+
+    number_list = []
     try:
-        synced = await bot.tree.sync(guild=discord.Object(id=int(GUILD_ID)))
-        print(f"Synced {len(synced)} commands.")
-    except Exception as e:
-        print("Sync error:", e)
-
-@bot.tree.command(name="create_event", description="Create a lucky draw event", guild=discord.Object(id=int(GUILD_ID)))
-@app_commands.describe(event_name="Event name", total_tickets="Number of tickets")
-async def create_event(interaction: Interaction, event_name: str, total_tickets: int):
-    tickets = list(range(1, total_tickets + 1))
-    prizes = {
-        "1": "🎁 First Prize",
-        "2": "🥈 Second Prize",
-        "3": "🥉 Third Prize"
-    }
-
-    event = {
-        "event_name": event_name,
-        "max_tickets": total_tickets,
-        "tickets": tickets,
-        "participants": {},
-        "prizes": prizes
-    }
-    save_event(event)
-    await interaction.channel.send(f"✅ Event **{event_name}** created with {total_tickets} tickets!")
-
-@bot.tree.command(name="register", description="Register for the event", guild=discord.Object(id=int(GUILD_ID)))
-async def register(interaction: Interaction):
-    event = load_event()
-    if not event:
-        await interaction.channel.send("❌ No event created.")
+        number_list = list(map(int, numbers.split()))
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid number list. Only use space-separated integers.", ephemeral=False)
         return
 
-    uid = str(interaction.user.id)
-    if uid in event["participants"]:
-        await interaction.channel.send("⚠️ You are already registered!")
-        return
-
-    draws = get_draws_from_roles(interaction.user)
-    if draws == 0:
-        await interaction.channel.send("❌ No valid role (V1–V10) found!")
-        return
-
-    event["participants"][uid] = {
-        "name": interaction.user.display_name,
-        "draws_left": draws,
-        "tickets": []
-    }
-    save_event(event)
-
-    await interaction.channel.send(
-        f"✅ {interaction.user.mention} registered successfully with {draws} draw(s) available!",
-        view=DrawView(interaction.user.id)
-    )
-
-@bot.tree.command(name="cancel_event", description="Cancel current event", guild=discord.Object(id=int(GUILD_ID)))
-async def cancel_event(interaction: Interaction):
-    if os.path.exists(EVENT_FILE):
-        os.remove(EVENT_FILE)
-        await interaction.channel.send("🚫 The current event has been cancelled.")
+    # Determine if it's a custom user or a real member
+    if identifier.isdigit():
+        uid = identifier
+        try:
+            member = await interaction.guild.fetch_member(int(uid))
+            max_allowed = get_max_entries(member)
+        except:
+            await interaction.response.send_message("❌ Could not find member in server.", ephemeral=False)
+            return
     else:
-        await interaction.channel.send("❌ No event to cancel.")
+        uid = f"custom:{identifier}"
+        max_allowed = 10  # Give full access to custom participants
 
-@bot.tree.command(name="add_mem", description="Add a participant to the event", guild=discord.Object(id=int(GUILD_ID)))
-@app_commands.describe(ten_nguoi="Tên người tham gia")
-@app_commands.checks.has_role("MOD")
-async def add_mem(interaction: Interaction, ten_nguoi: str):
-    event = load_event()
-    if not event:
-        await interaction.response.send_message("❌ Chưa có sự kiện nào được tạo.", ephemeral=True)
+    current_entries = events[event_name]["entries"].setdefault(uid, [])
+    total_after_add = len(current_entries) + len(number_list)
+    if total_after_add > max_allowed:
+        await interaction.response.send_message(
+            f"❌ This user can only have {max_allowed} numbers. Already has {len(current_entries)}.",
+            ephemeral=False
+        )
         return
 
-    uid = str(interaction.user.id)
-    if uid in event["participants"]:
-        await interaction.response.send_message("⚠️ Bạn đã đăng ký rồi!", ephemeral=True)
-        return
+    all_chosen = [n for nums in events[event_name]["entries"].values() for n in nums]
+    for n in number_list:
+        if n in all_chosen:
+            await interaction.response.send_message(f"❌ Number `{n}` is already taken.", ephemeral=False)
+            return
 
-    event["participants"][uid] = {
-        "name": ten_nguoi,
-        "draws_left": 1,
-        "tickets": []
-    }
-    save_event(event)
+    current_entries.extend(number_list)
+    save_events()
+    display_name = f"<@{uid}>" if uid.isdigit() else identifier
+    await interaction.response.send_message(f"✅ Added `{display_name}` with numbers: {', '.join(map(str, number_list))}", ephemeral=False)
 
-    await interaction.response.send_message(f"✅ Đã thêm {ten_nguoi} vào sự kiện.", ephemeral=True)
-
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)

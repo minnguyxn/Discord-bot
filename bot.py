@@ -46,23 +46,23 @@ class DrawView(ui.View):
     @ui.button(label="🎲 Draw Ticket", style=discord.ButtonStyle.green)
     async def draw(self, interaction: Interaction, button: ui.Button):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ You are not allowed to draw here!", ephemeral=True)
+            await interaction.response.send_message("❌ You are not allowed to draw here!", ephemeral=False)
             return
 
         event = load_event()
         uid = str(interaction.user.id)
 
         if uid not in event["participants"]:
-            await interaction.response.send_message("❌ You haven't registered yet!", ephemeral=True)
+            await interaction.response.send_message("❌ You haven't registered yet!", ephemeral=False)
             return
 
         p = event["participants"][uid]
         if p["draws_left"] <= 0:
-            await interaction.response.send_message("⚠️ You have no draws left!", ephemeral=True)
+            await interaction.response.send_message("⚠️ You have no draws left!", ephemeral=False)
             return
 
         if not event["tickets"]:
-            await interaction.response.send_message("❌ No tickets left!", ephemeral=True)
+            await interaction.response.send_message("❌ No tickets left!", ephemeral=False)
             return
 
         ticket = random.choice(event["tickets"])
@@ -113,17 +113,17 @@ async def create_event(interaction: Interaction, event_name: str, number_of_tick
 async def register(interaction: Interaction):
     event = load_event()
     if not event:
-        await interaction.response.send_message("❌ No event has been created yet.", ephemeral=True)
+        await interaction.response.send_message("❌ No event has been created yet.", ephemeral=False)
         return
 
     uid = str(interaction.user.id)
     if uid in event["participants"]:
-        await interaction.response.send_message("⚠️ You have already registered!", ephemeral=True)
+        await interaction.response.send_message("⚠️ You have already registered!", ephemeral=False)
         return
 
     draws = get_draws_from_roles(interaction.user)
     if draws == 0:
-        await interaction.response.send_message("❌ You do not have a valid role (V1–V10)!", ephemeral=True)
+        await interaction.response.send_message("❌ You do not have a valid role (V1–V10)!", ephemeral=False)
         return
 
     event["participants"][uid] = {
@@ -144,10 +144,10 @@ async def register(interaction: Interaction):
 async def cancel_event(interaction: Interaction):
     event = load_event()
     if not event:
-        await interaction.response.send_message("❌ No event to cancel.", ephemeral=True)
+        await interaction.response.send_message("❌ No event to cancel.", ephemeral=False)
         return
 
     os.remove(EVENT_FILE)
-    await interaction.response.send_message("✅ The event has been canceled.", ephemeral=True)
+    await interaction.response.send_message("✅ The event has been canceled.", ephemeral=False)
 
 bot.run(TOKEN)

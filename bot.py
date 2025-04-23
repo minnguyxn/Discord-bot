@@ -235,4 +235,4 @@ async def on_interaction(interaction: discord.Interaction):
             view = NumberSelectView(interaction, event_name, available, max_allowed, member.id, new_page)
             await interaction.response.edit_message(view=view)
 
-bot.run("TOKEN")
+bot.run(TOKEN)

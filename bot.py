@@ -4,20 +4,99 @@ from discord import app_commands
 import random
 import json
 import os
-from flask import Flask
-from threading import Thread
+import psycopg2
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-DATA_FILE = "events.json"
-events = {}
 ROLE_PREFIX = "V"
+
+# Khởi tạo cơ sở dữ liệu
+def init_db():
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS events (
+                    name TEXT PRIMARY KEY,
+                    creator_id TEXT NOT NULL,
+                    num_winners INTEGER NOT NULL
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS entries (
+                    event_name TEXT REFERENCES events(name),
+                    user_id TEXT,
+                    user_name TEXT,
+                    number INTEGER,
+                    PRIMARY KEY (event_name, number)
+                );
+            """)
+        conn.commit()
+    print("✅ Database initialized.")
+
+# Hàm tải dữ liệu sự kiện từ cơ sở dữ liệu
+def load_events():
+    global events
+    events = {}
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name, creator_id, num_winners FROM events;")
+            rows = cur.fetchall()
+            for row in rows:
+                event_name, creator_id, num_winners = row
+                events[event_name] = {
+                    "creator": creator_id,
+                    "num_winners": num_winners,
+                    "entries": {}
+                }
+
+            cur.execute("SELECT event_name, user_id, user_name, number FROM entries;")
+            rows = cur.fetchall()
+            for row in rows:
+                event_name, user_id, user_name, number = row
+                if event_name in events:
+                    if user_id not in events[event_name]["entries"]:
+                        events[event_name]["entries"][user_id] = []
+                    events[event_name]["entries"][user_id].append(number)
+
+# Lưu sự kiện vào cơ sở dữ liệu
+def save_events():
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            for event_name, event in events.items():
+                cur.execute("""
+                    INSERT INTO events (name, creator_id, num_winners)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (name) DO UPDATE
+                    SET creator_id = EXCLUDED.creator_id, num_winners = EXCLUDED.num_winners;
+                """, (event_name, event["creator"], event["num_winners"]))
+
+            cur.execute("DELETE FROM entries WHERE event_name NOT IN %s;", (tuple(events.keys()),))
+            for event_name, event in events.items():
+                for user_id, numbers in event["entries"].items():
+                    for number in numbers:
+                        cur.execute("""
+                            INSERT INTO entries (event_name, user_id, user_name, number)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (event_name, number) DO UPDATE
+                            SET user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name;
+                        """, (event_name, user_id, "Unknown", number))  # "Unknown" for now
+
+        conn.commit()
+
+# Khởi tạo khi bot sẵn sàng
+@bot.event
+async def on_ready():
+    init_db()  # Khởi tạo cơ sở dữ liệu khi bot khởi động
+    load_events()  # Tải sự kiện từ cơ sở dữ liệu
+    await bot.tree.sync()
+    print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
 
 def load_events():
     global events
@@ -189,4 +268,5 @@ Thread(target=run).start()
 
 # Start bot
 if __name__ == "__main__":
+    init_db()
     bot.run(TOKEN)

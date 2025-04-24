@@ -89,15 +89,15 @@ def save_events():
                             VALUES (%s, %s, %s, %s)
                             ON CONFLICT (event_name, number) DO UPDATE
                             SET user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name;
-                        """, (event_name, user_id, "Unknown", number))
+                        """, (event_name, user_id, "Unknown", number))  # "Unknown" for now
 
         conn.commit()
 
 # Khởi tạo khi bot sẵn sàng
 @bot.event
 async def on_ready():
-    init_db()
-    load_events()
+    init_db()  # Khởi tạo cơ sở dữ liệu khi bot khởi động
+    load_events()  # Tải sự kiện từ cơ sở dữ liệu
     await bot.tree.sync()
     print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
 
@@ -110,59 +110,53 @@ def get_max_entries(member: discord.Member) -> int:
 @bot.tree.command(name="create_event", description="Tạo sự kiện rút thăm may mắn")
 @app_commands.describe(event_name="Tên sự kiện", num_winners="Số người thắng")
 async def create_event(interaction: discord.Interaction, event_name: str, num_winners: int):
-    if event_name in events:
-        await interaction.response.send_message(f"❌ Sự kiện `{event_name}` đã tồn tại.", ephemeral=False)
-        return
-
     await interaction.response.defer()
-
+    if event_name in events:
+        await interaction.followup.send(f"❌ Sự kiện `{event_name}` đã tồn tại.", ephemeral=False)
+        return
     events[event_name] = {
         "creator": interaction.user.id,
         "num_winners": num_winners,
         "entries": {}
     }
     save_events()
-
     await interaction.followup.send(f"🎉 Sự kiện `{event_name}` đã được tạo với {num_winners} người thắng!", ephemeral=False)
 
 @bot.tree.command(name="register", description="Đăng ký số cho sự kiện")
 @app_commands.describe(event_name="Tên sự kiện", number="Số bạn chọn")
 async def register(interaction: discord.Interaction, event_name: str, number: int):
+    await interaction.response.defer()
     member = interaction.user
     if event_name not in events:
-        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
     max_allowed = get_max_entries(member)
     if max_allowed == 0:
-        await interaction.response.send_message("❌ Bạn không có role hợp lệ (V1–V10).", ephemeral=False)
+        await interaction.followup.send("❌ Bạn không có role hợp lệ (V1–V10).", ephemeral=False)
         return
     event = events[event_name]
     entries = event["entries"].setdefault(str(member.id), [])
     if number in [n for e in event["entries"].values() for n in (e["numbers"] if isinstance(e, dict) else e)]:
-        await interaction.response.send_message("❌ Số đã được người khác chọn.", ephemeral=False)
+        await interaction.followup.send("❌ Số đã được người khác chọn.", ephemeral=False)
         return
     if len(entries) >= max_allowed:
-        await interaction.response.send_message(f"❌ Bạn chỉ có thể chọn {max_allowed} số.", ephemeral=False)
+        await interaction.followup.send(f"❌ Bạn chỉ có thể chọn {max_allowed} số.", ephemeral=False)
         return
     entries.append(number)
     save_events()
-    await interaction.response.send_message(f"✅ {member.mention} đã chọn số `{number}`!", ephemeral=False)
+    await interaction.followup.send(f"✅ {member.mention} đã chọn số `{number}`!", ephemeral=False)
 
 @bot.tree.command(name="list_entries", description="Hiển thị tất cả các số đã đăng ký cho sự kiện")
 @app_commands.describe(event_name="Tên sự kiện")
 async def list_entries(interaction: discord.Interaction, event_name: str):
+    await interaction.response.defer(thinking=True)
     if event_name not in events:
-        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=True)
+        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=True)
         return
-
-    if not interaction.response.is_done():
-        await interaction.response.defer(thinking=True)
-
     event = events[event_name]
     if not event["entries"]:
         await interaction.followup.send(f"📭 Chưa có ai đăng ký cho sự kiện `{event_name}`.", ephemeral=False)
         return
-
     result = ""
     for uid, entry in event["entries"].items():
         if isinstance(entry, dict) and "numbers" in entry and "name" in entry:
@@ -178,35 +172,37 @@ async def list_entries(interaction: discord.Interaction, event_name: str):
 @bot.tree.command(name="draw_winners", description="Rút thăm người thắng cuộc từ sự kiện")
 @app_commands.describe(event_name="Tên sự kiện")
 async def draw_winners(interaction: discord.Interaction, event_name: str):
+    await interaction.response.defer()
     if event_name not in events:
-        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
     event = events[event_name]
     if interaction.user.id != event["creator"]:
-        await interaction.response.send_message("❌ Chỉ người tạo sự kiện mới có thể rút thăm.", ephemeral=False)
+        await interaction.followup.send("❌ Chỉ người tạo sự kiện mới có thể rút thăm.", ephemeral=False)
         return
     all_entries = [(uid, num) for uid, e in event["entries"].items() for num in (e["numbers"] if isinstance(e, dict) else e)]
     if len(all_entries) < event["num_winners"]:
-        await interaction.response.send_message("❌ Không đủ người tham gia để rút thăm.", ephemeral=False)
+        await interaction.followup.send("❌ Không đủ người tham gia để rút thăm.", ephemeral=False)
         return
     winners = random.sample(all_entries, event["num_winners"])
     result = "\n".join([f"<@{uid}> với số `{num}`" for uid, num in winners])
-    await interaction.response.send_message(f"🏆 **Người thắng cuộc của `{event_name}`:**\n{result}", ephemeral=False)
+    await interaction.followup.send(f"🏆 **Người thắng cuộc của `{event_name}`:**\n{result}", ephemeral=False)
     del events[event_name]
     save_events()
 
 @bot.tree.command(name="cancel_event", description="Hủy bỏ sự kiện")
 @app_commands.describe(event_name="Tên sự kiện")
 async def cancel_event(interaction: discord.Interaction, event_name: str):
+    await interaction.response.defer()
     if event_name not in events:
-        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
     if interaction.user.id != events[event_name]["creator"]:
-        await interaction.response.send_message("❌ Chỉ người tạo sự kiện mới có thể hủy.", ephemeral=False)
+        await interaction.followup.send("❌ Chỉ người tạo sự kiện mới có thể hủy.", ephemeral=False)
         return
     del events[event_name]
     save_events()
-    await interaction.response.send_message(f"🚫 Sự kiện `{event_name}` đã bị hủy.", ephemeral=False)
+    await interaction.followup.send(f"🚫 Sự kiện `{event_name}` đã bị hủy.", ephemeral=False)
 
 # Flask keep-alive for Render
 app = Flask('')

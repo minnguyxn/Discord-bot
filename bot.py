@@ -19,7 +19,7 @@ events = {}
 
 ROLE_PREFIX = "V"
 
-# Khởi tạo cơ sở dữ liệu
+# Initialize database
 def init_db():
     with psycopg2.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
@@ -42,7 +42,7 @@ def init_db():
         conn.commit()
     print("✅ Database initialized.")
 
-# Tải dữ liệu sự kiện
+# Load events from database
 def load_events():
     global events
     events = {}
@@ -61,7 +61,7 @@ def load_events():
                     user_entries = events[event_name]["entries"].setdefault(user_id, {"name": user_name, "numbers": []})
                     user_entries["numbers"].append(number)
 
-# Lưu dữ liệu sự kiện
+# Save events to database
 def save_events():
     with psycopg2.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
@@ -87,13 +87,12 @@ def save_events():
                         """, (event_name, user_id, name, number))
         conn.commit()
 
-# Ready event
 @bot.event
 async def on_ready():
     init_db()
     load_events()
     await bot.tree.sync()
-    print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
+    print(f"✅ Bot is ready as {bot.user}")
 
 def get_max_entries(member: discord.Member) -> int:
     for i in range(10, 0, -1):
@@ -101,12 +100,12 @@ def get_max_entries(member: discord.Member) -> int:
             return i
     return 0
 
-@bot.tree.command(name="create_event", description="Tạo sự kiện rút thăm may mắn")
-@app_commands.describe(event_name="Tên sự kiện", num_winners="Số người thắng")
+@bot.tree.command(name="create_event", description="Create a lucky draw event")
+@app_commands.describe(event_name="Event name", num_winners="Number of winners")
 async def create_event(interaction: discord.Interaction, event_name: str, num_winners: int):
     await interaction.response.defer()
     if event_name in events:
-        await interaction.followup.send(f"❌ Sự kiện `{event_name}` đã tồn tại.", ephemeral=False)
+        await interaction.followup.send(f"❌ Event `{event_name}` already exists.", ephemeral=False)
         return
     events[event_name] = {
         "creator": str(interaction.user.id),
@@ -114,115 +113,147 @@ async def create_event(interaction: discord.Interaction, event_name: str, num_wi
         "entries": {}
     }
     save_events()
-    await interaction.followup.send(f"🎉 Sự kiện `{event_name}` đã được tạo với {num_winners} người thắng!", ephemeral=False)
+    await interaction.followup.send(f"🎉 Event `{event_name}` created with {num_winners} winner(s)!", ephemeral=False)
 
-@bot.tree.command(name="register", description="Đăng ký số cho sự kiện")
-@app_commands.describe(event_name="Tên sự kiện", number="Số bạn chọn")
-async def register(interaction: discord.Interaction, event_name: str, number: int):
+@bot.tree.command(name="register", description="Register one or more numbers for an event")
+@app_commands.describe(event_name="Event name", numbers="Your chosen numbers (comma-separated)")
+async def register(interaction: discord.Interaction, event_name: str, numbers: str):
     await interaction.response.defer()
     member = interaction.user
+
     if event_name not in events:
-        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.followup.send("❌ Event not found.", ephemeral=False)
         return
+
     max_allowed = get_max_entries(member)
     if max_allowed == 0:
-        await interaction.followup.send("❌ Bạn không có role hợp lệ (V1–V10).", ephemeral=False)
+        await interaction.followup.send("❌ You do not have a valid role (V1–V10).", ephemeral=False)
         return
-    event = events[event_name]
-    if number in [n for e in event["entries"].values() for n in e["numbers"]]:
-        await interaction.followup.send("❌ Số đã được người khác chọn.", ephemeral=False)
-        return
-    user_id = str(member.id)
-    entries = event["entries"].setdefault(user_id, {"name": member.display_name, "numbers": []})
-    if len(entries["numbers"]) >= max_allowed:
-        await interaction.followup.send(f"❌ Bạn chỉ có thể chọn {max_allowed} số.", ephemeral=False)
-        return
-    entries["numbers"].append(number)
-    save_events()
-    await interaction.followup.send(f"✅ {member.mention} đã chọn số `{number}`!", ephemeral=False)
 
-@bot.tree.command(name="list_entries", description="Hiển thị tất cả các số đã đăng ký cho sự kiện")
-@app_commands.describe(event_name="Tên sự kiện")
+    try:
+        chosen_numbers = [int(n.strip()) for n in numbers.split(",")]
+    except ValueError:
+        await interaction.followup.send("❌ Invalid number list. Use commas to separate numbers.", ephemeral=False)
+        return
+
+    if any(n < 0 or n > 9999 for n in chosen_numbers):
+        await interaction.followup.send("❌ Only numbers between 0 and 9999 are allowed.", ephemeral=False)
+        return
+
+    event = events[event_name]
+    all_numbers = [n for e in event["entries"].values() for n in e["numbers"]]
+    entries = event["entries"].setdefault(str(member.id), {"name": member.display_name, "numbers": []})
+
+    available_slots = max_allowed - len(entries["numbers"])
+    new_numbers = [n for n in chosen_numbers if n not in all_numbers]
+    if not new_numbers:
+        await interaction.followup.send("❌ All chosen numbers are already taken.", ephemeral=False)
+        return
+
+    if len(new_numbers) > available_slots:
+        await interaction.followup.send(f"❌ You can only choose {available_slots} more number(s).", ephemeral=False)
+        return
+
+    entries["numbers"].extend(new_numbers)
+    save_events()
+    await interaction.followup.send(f"✅ {member.mention} registered: `{', '.join(map(str, new_numbers))}`", ephemeral=False)
+
+@bot.tree.command(name="list_entries", description="List all registered numbers for an event")
+@app_commands.describe(event_name="Event name")
 async def list_entries(interaction: discord.Interaction, event_name: str):
     await interaction.response.defer(thinking=True)
     if event_name not in events:
-        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=True)
+        await interaction.followup.send("❌ Event not found.", ephemeral=True)
         return
     event = events[event_name]
     if not event["entries"]:
-        await interaction.followup.send(f"📭 Chưa có ai đăng ký cho sự kiện `{event_name}`.", ephemeral=False)
+        await interaction.followup.send(f"📭 No one has registered for `{event_name}`.", ephemeral=False)
         return
     result = ""
     for user_id, entry in event["entries"].items():
         user_display = entry["name"]
         number_list = ", ".join(str(n) for n in entry["numbers"])
         result += f"- **{user_display}**: {number_list}\n"
-    await interaction.followup.send(f"📋 Các số đã đăng ký cho `{event_name}`:\n{result}", ephemeral=False)
+    await interaction.followup.send(f"📋 Registered numbers for `{event_name}`:\n{result}", ephemeral=False)
 
-@bot.tree.command(name="draw_winners", description="Rút thăm người thắng cuộc từ sự kiện")
-@app_commands.describe(event_name="Tên sự kiện")
+@bot.tree.command(name="draw_winners", description="Draw winners from an event")
+@app_commands.describe(event_name="Event name")
 async def draw_winners(interaction: discord.Interaction, event_name: str):
     await interaction.response.defer()
     if event_name not in events:
-        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.followup.send("❌ Event not found.", ephemeral=False)
         return
     event = events[event_name]
     if str(interaction.user.id) != event["creator"]:
-        await interaction.followup.send("❌ Chỉ người tạo sự kiện mới có thể rút thăm.", ephemeral=False)
+        await interaction.followup.send("❌ Only the creator can draw winners.", ephemeral=False)
         return
     all_entries = [(uid, n) for uid, e in event["entries"].items() for n in e["numbers"]]
     if len(all_entries) < event["num_winners"]:
-        await interaction.followup.send("❌ Không đủ người tham gia để rút thăm.", ephemeral=False)
+        await interaction.followup.send("❌ Not enough entries to draw.", ephemeral=False)
         return
     winners = random.sample(all_entries, event["num_winners"])
-    result = "\n".join([f"**{events[event_name]['entries'][uid]['name']}** với số `{num}`" for uid, num in winners])
-    await interaction.followup.send(f"🏆 **Người thắng cuộc của `{event_name}`:**\n{result}", ephemeral=False)
+    result = "\n".join([f"**{events[event_name]['entries'][uid]['name']}** with number `{num}`" for uid, num in winners])
+    await interaction.followup.send(f"🏆 **Winners of `{event_name}`:**\n{result}", ephemeral=False)
     del events[event_name]
     save_events()
 
-@bot.tree.command(name="cancel_event", description="Hủy bỏ sự kiện")
-@app_commands.describe(event_name="Tên sự kiện")
+@bot.tree.command(name="cancel_event", description="Cancel an event")
+@app_commands.describe(event_name="Event name")
 async def cancel_event(interaction: discord.Interaction, event_name: str):
     await interaction.response.defer()
     if event_name not in events:
-        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.followup.send("❌ Event not found.", ephemeral=False)
         return
     if str(interaction.user.id) != events[event_name]["creator"]:
-        await interaction.followup.send("❌ Chỉ người tạo sự kiện mới có thể hủy.", ephemeral=False)
+        await interaction.followup.send("❌ Only the creator can cancel this event.", ephemeral=False)
         return
     del events[event_name]
     save_events()
-    await interaction.followup.send(f"🚫 Sự kiện `{event_name}` đã bị hủy.", ephemeral=False)
+    await interaction.followup.send(f"🚫 Event `{event_name}` has been canceled.", ephemeral=False)
 
-# Kiểm tra người dùng có role MOD
+# Check if user is MOD
 def is_mod(member: discord.Member) -> bool:
     return any(role.name == "MOD" for role in member.roles)
 
-# Lệnh thêm người (add_mem) – chỉ MOD
-@bot.tree.command(name="add_mem", description="Thêm người vào sự kiện với tên ingame và số (chỉ MOD)")
-@app_commands.describe(event_name="Tên sự kiện", ingame_name="Tên ingame người dùng", number="Số bạn chọn")
-async def add_mem(interaction: discord.Interaction, event_name: str, ingame_name: str, number: int):
+@bot.tree.command(name="add_mem", description="Add a user to event manually (MOD only)")
+@app_commands.describe(event_name="Event name", ingame_name="In-game name", numbers="Numbers (comma-separated)")
+async def add_mem(interaction: discord.Interaction, event_name: str, ingame_name: str, numbers: str):
     await interaction.response.defer()
     if not is_mod(interaction.user):
-        await interaction.followup.send("❌ Lệnh này chỉ dành cho MOD.", ephemeral=True)
+        await interaction.followup.send("❌ This command is MOD only.", ephemeral=True)
         return
-    if event_name not in events:
-        await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
-        return
-    if number in [n for e in events[event_name]["entries"].values() for n in e["numbers"]]:
-        await interaction.followup.send("❌ Số đã được người khác chọn.", ephemeral=False)
-        return
-    entries = events[event_name]["entries"].setdefault(ingame_name, {"name": ingame_name, "numbers": []})
-    entries["numbers"].append(number)
-    save_events()
-    await interaction.followup.send(f"✅ {ingame_name} đã được thêm vào sự kiện `{event_name}` với số `{number}`!", ephemeral=False)
 
-# Lệnh xóa toàn bộ dữ liệu (chỉ MOD)
-@bot.tree.command(name="clear_all_data", description="Xóa toàn bộ dữ liệu sự kiện (chỉ MOD)")
+    if event_name not in events:
+        await interaction.followup.send("❌ Event not found.", ephemeral=False)
+        return
+
+    try:
+        chosen_numbers = [int(n.strip()) for n in numbers.split(",")]
+    except ValueError:
+        await interaction.followup.send("❌ Invalid number list. Use commas.", ephemeral=False)
+        return
+
+    if any(n < 0 or n > 9999 for n in chosen_numbers):
+        await interaction.followup.send("❌ Only numbers between 0 and 9999 are allowed.", ephemeral=False)
+        return
+
+    event = events[event_name]
+    all_numbers = [n for e in event["entries"].values() for n in e["numbers"]]
+    new_numbers = [n for n in chosen_numbers if n not in all_numbers]
+    if not new_numbers:
+        await interaction.followup.send("❌ All chosen numbers are already taken.", ephemeral=False)
+        return
+
+    entries = event["entries"].setdefault(ingame_name, {"name": ingame_name, "numbers": []})
+    entries["numbers"].extend(new_numbers)
+    save_events()
+    await interaction.followup.send(f"✅ Added `{ingame_name}` with numbers: `{', '.join(map(str, new_numbers))}`", ephemeral=False)
+
+@bot.tree.command(name="clear_all_data", description="Clear all event data (MOD only)")
 async def clear_all_data(interaction: discord.Interaction):
     await interaction.response.defer()
     if not is_mod(interaction.user):
-        await interaction.followup.send("❌ Lệnh này chỉ dành cho MOD.", ephemeral=True)
+        await interaction.followup.send("❌ This command is MOD only.", ephemeral=True)
         return
     events.clear()
     with psycopg2.connect(DATABASE_URL) as conn:
@@ -230,7 +261,34 @@ async def clear_all_data(interaction: discord.Interaction):
             cur.execute("DELETE FROM entries;")
             cur.execute("DELETE FROM events;")
         conn.commit()
-    await interaction.followup.send("🗑️ Tất cả dữ liệu đã bị xóa hoàn toàn!", ephemeral=False)
+    await interaction.followup.send("🗑️ All data has been cleared!", ephemeral=False)
+
+@bot.tree.command(name="list_events", description="List all available events")
+async def list_events(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not events:
+        await interaction.followup.send("📭 No available events.", ephemeral=False)
+        return
+    event_list = "\n".join([f"- `{name}` with {info['num_winners']} winner(s)" for name, info in events.items()])
+    await interaction.followup.send(f"📅 Current events:\n{event_list}", ephemeral=False)
+
+@bot.tree.command(name="help", description="List all bot commands")
+async def help_command(interaction: discord.Interaction):
+    await interaction.response.defer()
+    commands_list = """
+📘 **Available Commands:**
+/create_event - Create a lucky draw event
+/register - Register numbers for an event
+/list_entries - List all registered numbers for an event
+/list_events - List all available events
+/draw_winners - Draw winners from an event
+/cancel_event - Cancel an event
+/add_mem - Add user and numbers (MOD only)
+/clear_all_data - Clear all event data (MOD only)
+/help - Show this help message
+"""
+    await interaction.followup.send(commands_list, ephemeral=False)
+
 # Flask keep-alive for Render
 app = Flask('')
 
@@ -243,7 +301,6 @@ def run():
 
 Thread(target=run).start()
 
-# Start bot
 if __name__ == "__main__":
     init_db()
     bot.run(TOKEN)

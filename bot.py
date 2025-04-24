@@ -203,41 +203,35 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     del events[event_name]
     save_events()
     await interaction.followup.send(f"🚫 Sự kiện `{event_name}` đã bị hủy.", ephemeral=False)
-@bot.tree.command(name="add_mem", description="Thêm người vào sự kiện bằng ID người dùng hoặc tên")
-@app_commands.describe(event_name="Tên sự kiện", user_id="ID người dùng hoặc tên cần thêm", number="Số chọn")
-async def add_mem(interaction: discord.Interaction, event_name: str, user_id: str, number: int):
+@bot.tree.command(name="add_mem", description="Thêm người vào sự kiện với tên ingame và số")
+@app_commands.describe(event_name="Tên sự kiện", ingame_name="Tên ingame người dùng cần thêm", number="Số bạn chọn")
+async def add_mem(interaction: discord.Interaction, event_name: str, ingame_name: str, number: int):
     await interaction.response.defer()
-    
+
     # Kiểm tra nếu sự kiện đã tồn tại
     if event_name not in events:
         await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
-    
-    # Nếu user_id là tên người dùng, tìm người dùng qua tên
-    if not user_id.isdigit():  # Nếu không phải ID, sẽ coi đó là tên người dùng
-        member = discord.utils.get(interaction.guild.members, name=user_id)
-    else:  # Nếu là ID người dùng, lấy người dùng theo ID
-        member = await bot.fetch_user(user_id)
-    
-    # Kiểm tra nếu không tìm thấy người dùng
-    if not member:
-        await interaction.followup.send(f"❌ Không tìm thấy người dùng với ID hoặc tên `{user_id}`.", ephemeral=False)
-        return
-    
-    event = events[event_name]
-    
+
+    # Tìm người chơi theo tên ingame
+    # MOD có thể thêm người chơi vào sự kiện bằng tên ingame
+    # Ở đây, sẽ không tìm kiếm theo Discord mà chỉ ghi nhận tên ingame
+    member_id = str(ingame_name)  # Sử dụng tên ingame làm ID cho sự kiện
+
     # Kiểm tra nếu số đã chọn chưa được chọn
-    if number in [n for e in event["entries"].values() for n in e]:
+    if number in [n for e in events[event_name]["entries"].values() for n in e]:
         await interaction.followup.send("❌ Số đã được người khác chọn.", ephemeral=False)
         return
     
-    # Thêm người dùng vào danh sách đăng ký
-    entries = event["entries"].setdefault(str(member.id), [])
+    # Thêm người chơi vào danh sách đăng ký
+    event = events[event_name]
+    entries = event["entries"].setdefault(member_id, [])
     entries.append(number)
-    
+
     # Lưu sự kiện sau khi thay đổi
     save_events()
-    await interaction.followup.send(f"✅ {member.mention} đã được thêm vào sự kiện `{event_name}` với số `{number}`!", ephemeral=False)
+    await interaction.followup.send(f"✅ {ingame_name} đã được thêm vào sự kiện `{event_name}` với số `{number}`!", ephemeral=False)
+
 
 # Flask keep-alive for Render
 app = Flask('')

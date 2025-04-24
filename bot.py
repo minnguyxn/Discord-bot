@@ -16,6 +16,7 @@ intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
+events = {}
 
 ROLE_PREFIX = "V"
 

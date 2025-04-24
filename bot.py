@@ -4,7 +4,6 @@ from discord import app_commands
 from threading import Thread
 from flask import Flask
 import random
-import json
 import os
 import psycopg2
 
@@ -16,7 +15,6 @@ intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
-events = {}
 
 ROLE_PREFIX = "V"
 
@@ -101,27 +99,11 @@ async def on_ready():
     await bot.tree.sync()
     print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
 
-def load_events():
-    global events
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            events = json.load(f)
-
-def save_events():
-    with open(DATA_FILE, "w") as f:
-        json.dump(events, f)
-
 def get_max_entries(member: discord.Member) -> int:
     for i in range(10, 0, -1):
         if discord.utils.get(member.roles, name=f"{ROLE_PREFIX}{i}"):
             return i
     return 0
-
-@bot.event
-async def on_ready():
-    load_events()
-    await bot.tree.sync()
-    print(f"✅ Bot is ready as {bot.user}")
 
 @bot.tree.command(name="create_event", description="Create a lucky draw event")
 @app_commands.describe(event_name="Event name", num_winners="Number of winners")
@@ -150,7 +132,7 @@ async def register(interaction: discord.Interaction, event_name: str, number: in
         return
     event = events[event_name]
     entries = event["entries"].setdefault(str(member.id), [])
-    if number in [n for e in event["entries"].values() for n in (e["numbers"] if isinstance(e, dict) else e)]:
+    if number in [n for e in event["entries"].values() for n in (e if isinstance(e, list) else e["numbers"])]:
         await interaction.response.send_message("❌ Number already taken by someone else.", ephemeral=False)
         return
     if len(entries) >= max_allowed:
@@ -202,7 +184,6 @@ async def draw_winners(interaction: discord.Interaction, event_name: str):
     await interaction.response.send_message(f"🏆 **Winners of `{event_name}`:**\n{result}", ephemeral=False)
     del events[event_name]
     save_events()
-
 @bot.tree.command(name="cancel_event", description="Cancel an event")
 @app_commands.describe(event_name="Event name")
 async def cancel_event(interaction: discord.Interaction, event_name: str):
@@ -256,28 +237,28 @@ async def add_mem(interaction: discord.Interaction, event_name: str, user_id: st
     events[event_name]["entries"][user_id] = {"name": name, "numbers": current_entries}
     save_events()
     await interaction.response.send_message(f"✅ Added **{name}** with numbers: {', '.join(map(str, number_list))}", ephemeral=False)
-@bot.tree.command(name="delete_event", description="Xóa sự kiện")
-@app_commands.describe(event_name="Tên sự kiện")
+
+@bot.tree.command(name="delete_event", description="Delete an event")
+@app_commands.describe(event_name="Event name")
 async def delete_event(interaction: discord.Interaction, event_name: str):
     if event_name not in events:
-        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
+        await interaction.response.send_message("❌ Event not found.", ephemeral=False)
         return
     event = events[event_name]
     if interaction.user.id != event["creator"]:
-        await interaction.response.send_message("❌ Chỉ người tạo sự kiện mới có thể xóa.", ephemeral=False)
+        await interaction.response.send_message("❌ Only the creator can delete this event.", ephemeral=False)
         return
-
     del events[event_name]
     save_events()
-    await interaction.response.send_message(f"🚮 Đã xóa sự kiện `{event_name}`.", ephemeral=False)
-@bot.tree.command(name="list_events", description="Hiển thị toàn bộ các sự kiện đang mở")
+    await interaction.response.send_message(f"🚮 Event `{event_name}` deleted.", ephemeral=False)
+
+@bot.tree.command(name="list_events", description="Show all open events")
 async def list_events(interaction: discord.Interaction):
     if not events:
-        await interaction.response.send_message("❌ Không có sự kiện nào đang mở.", ephemeral=False)
+        await interaction.response.send_message("❌ No open events.", ephemeral=False)
         return
-    
     event_list = "\n".join([f"• `{event_name}` - {event['num_winners']} winners" for event_name, event in events.items()])
-    await interaction.response.send_message(f"📋 Các sự kiện đang mở:\n{event_list}", ephemeral=False)
+    await interaction.response.send_message(f"📋 Open events:\n{event_list}", ephemeral=False)
 
 # Flask keep-alive for Render
 app = Flask('')

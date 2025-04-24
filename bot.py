@@ -254,6 +254,28 @@ async def add_mem(interaction: discord.Interaction, event_name: str, user_id: st
     events[event_name]["entries"][user_id] = {"name": name, "numbers": current_entries}
     save_events()
     await interaction.response.send_message(f"✅ Added **{name}** with numbers: {', '.join(map(str, number_list))}", ephemeral=False)
+@bot.tree.command(name="delete_event", description="Xóa sự kiện")
+@app_commands.describe(event_name="Tên sự kiện")
+async def delete_event(interaction: discord.Interaction, event_name: str):
+    if event_name not in events:
+        await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=False)
+        return
+    event = events[event_name]
+    if interaction.user.id != event["creator"]:
+        await interaction.response.send_message("❌ Chỉ người tạo sự kiện mới có thể xóa.", ephemeral=False)
+        return
+
+    del events[event_name]
+    save_events()
+    await interaction.response.send_message(f"🚮 Đã xóa sự kiện `{event_name}`.", ephemeral=False)
+@bot.tree.command(name="list_events", description="Hiển thị toàn bộ các sự kiện đang mở")
+async def list_events(interaction: discord.Interaction):
+    if not events:
+        await interaction.response.send_message("❌ Không có sự kiện nào đang mở.", ephemeral=False)
+        return
+    
+    event_list = "\n".join([f"• `{event_name}` - {event['num_winners']} winners" for event_name, event in events.items()])
+    await interaction.response.send_message(f"📋 Các sự kiện đang mở:\n{event_list}", ephemeral=False)
 
 # Flask keep-alive for Render
 app = Flask('')

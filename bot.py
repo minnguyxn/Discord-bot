@@ -89,15 +89,15 @@ def save_events():
                             VALUES (%s, %s, %s, %s)
                             ON CONFLICT (event_name, number) DO UPDATE
                             SET user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name;
-                        """, (event_name, user_id, "Unknown", number))  # "Unknown" for now
+                        """, (event_name, user_id, "Unknown", number))
 
         conn.commit()
 
 # Khởi tạo khi bot sẵn sàng
 @bot.event
 async def on_ready():
-    init_db()  # Khởi tạo cơ sở dữ liệu khi bot khởi động
-    load_events()  # Tải sự kiện từ cơ sở dữ liệu
+    init_db()
+    load_events()
     await bot.tree.sync()
     print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
 
@@ -113,8 +113,8 @@ async def create_event(interaction: discord.Interaction, event_name: str, num_wi
     if event_name in events:
         await interaction.response.send_message(f"❌ Sự kiện `{event_name}` đã tồn tại.", ephemeral=False)
         return
-    
-    await interaction.response.defer()  # Hoãn phản hồi để có thêm thời gian xử lý
+
+    await interaction.response.defer()
 
     events[event_name] = {
         "creator": interaction.user.id,
@@ -154,11 +154,15 @@ async def list_entries(interaction: discord.Interaction, event_name: str):
     if event_name not in events:
         await interaction.response.send_message("❌ Sự kiện không tồn tại.", ephemeral=True)
         return
-    await interaction.response.defer(thinking=True)
+
+    if not interaction.response.is_done():
+        await interaction.response.defer(thinking=True)
+
     event = events[event_name]
     if not event["entries"]:
         await interaction.followup.send(f"📭 Chưa có ai đăng ký cho sự kiện `{event_name}`.", ephemeral=False)
         return
+
     result = ""
     for uid, entry in event["entries"].items():
         if isinstance(entry, dict) and "numbers" in entry and "name" in entry:

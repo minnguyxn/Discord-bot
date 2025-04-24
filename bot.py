@@ -4,7 +4,6 @@ from discord import app_commands
 from threading import Thread
 from flask import Flask
 import random
-import json
 import os
 import psycopg2
 
@@ -43,32 +42,26 @@ def init_db():
         conn.commit()
     print("✅ Database initialized.")
 
-# Hàm tải dữ liệu sự kiện từ cơ sở dữ liệu
+# Tải dữ liệu sự kiện
 def load_events():
     global events
     events = {}
     with psycopg2.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT name, creator_id, num_winners FROM events;")
-            rows = cur.fetchall()
-            for row in rows:
-                event_name, creator_id, num_winners = row
-                events[event_name] = {
+            for name, creator_id, num_winners in cur.fetchall():
+                events[name] = {
                     "creator": creator_id,
                     "num_winners": num_winners,
                     "entries": {}
                 }
-
             cur.execute("SELECT event_name, user_id, user_name, number FROM entries;")
-            rows = cur.fetchall()
-            for row in rows:
-                event_name, user_id, user_name, number = row
+            for event_name, user_id, user_name, number in cur.fetchall():
                 if event_name in events:
-                    if user_id not in events[event_name]["entries"]:
-                        events[event_name]["entries"][user_id] = []
-                    events[event_name]["entries"][user_id].append(number)
+                    user_entries = events[event_name]["entries"].setdefault(user_id, {"name": user_name, "numbers": []})
+                    user_entries["numbers"].append(number)
 
-# Lưu sự kiện vào cơ sở dữ liệu
+# Lưu dữ liệu sự kiện
 def save_events():
     with psycopg2.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
@@ -81,23 +74,24 @@ def save_events():
                 """, (event_name, event["creator"], event["num_winners"]))
 
             cur.execute("DELETE FROM entries WHERE event_name NOT IN %s;", (tuple(events.keys()),))
+
             for event_name, event in events.items():
-                for user_id, numbers in event["entries"].items():
-                    for number in numbers:
+                for user_id, entry in event["entries"].items():
+                    name = entry["name"]
+                    for number in entry["numbers"]:
                         cur.execute("""
                             INSERT INTO entries (event_name, user_id, user_name, number)
                             VALUES (%s, %s, %s, %s)
                             ON CONFLICT (event_name, number) DO UPDATE
                             SET user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name;
-                        """, (event_name, user_id, "Unknown", number))  # "Unknown" for now
-
+                        """, (event_name, user_id, name, number))
         conn.commit()
 
-# Khởi tạo khi bot sẵn sàng
+# Ready event
 @bot.event
 async def on_ready():
-    init_db()  # Khởi tạo cơ sở dữ liệu khi bot khởi động
-    load_events()  # Tải sự kiện từ cơ sở dữ liệu
+    init_db()
+    load_events()
     await bot.tree.sync()
     print(f"✅ Bot sẵn sàng dưới tên {bot.user}")
 
@@ -115,7 +109,7 @@ async def create_event(interaction: discord.Interaction, event_name: str, num_wi
         await interaction.followup.send(f"❌ Sự kiện `{event_name}` đã tồn tại.", ephemeral=False)
         return
     events[event_name] = {
-        "creator": interaction.user.id,
+        "creator": str(interaction.user.id),
         "num_winners": num_winners,
         "entries": {}
     }
@@ -135,14 +129,15 @@ async def register(interaction: discord.Interaction, event_name: str, number: in
         await interaction.followup.send("❌ Bạn không có role hợp lệ (V1–V10).", ephemeral=False)
         return
     event = events[event_name]
-    entries = event["entries"].setdefault(str(member.id), [])
-    if number in [n for e in event["entries"].values() for n in (e["numbers"] if isinstance(e, dict) else e)]:
+    if number in [n for e in event["entries"].values() for n in e["numbers"]]:
         await interaction.followup.send("❌ Số đã được người khác chọn.", ephemeral=False)
         return
-    if len(entries) >= max_allowed:
+    user_id = str(member.id)
+    entries = event["entries"].setdefault(user_id, {"name": member.display_name, "numbers": []})
+    if len(entries["numbers"]) >= max_allowed:
         await interaction.followup.send(f"❌ Bạn chỉ có thể chọn {max_allowed} số.", ephemeral=False)
         return
-    entries.append(number)
+    entries["numbers"].append(number)
     save_events()
     await interaction.followup.send(f"✅ {member.mention} đã chọn số `{number}`!", ephemeral=False)
 
@@ -158,15 +153,10 @@ async def list_entries(interaction: discord.Interaction, event_name: str):
         await interaction.followup.send(f"📭 Chưa có ai đăng ký cho sự kiện `{event_name}`.", ephemeral=False)
         return
     result = ""
-    for uid, entry in event["entries"].items():
-        if isinstance(entry, dict) and "numbers" in entry and "name" in entry:
-            user_display = f"**{entry['name']}**"
-            numbers = entry["numbers"]
-        else:
-            user_display = f"<@{uid}>"
-            numbers = entry
-        number_list = ", ".join(str(n) for n in numbers)
-        result += f"- {user_display}: {number_list}\n"
+    for user_id, entry in event["entries"].items():
+        user_display = entry["name"]
+        number_list = ", ".join(str(n) for n in entry["numbers"])
+        result += f"- **{user_display}**: {number_list}\n"
     await interaction.followup.send(f"📋 Các số đã đăng ký cho `{event_name}`:\n{result}", ephemeral=False)
 
 @bot.tree.command(name="draw_winners", description="Rút thăm người thắng cuộc từ sự kiện")
@@ -177,15 +167,15 @@ async def draw_winners(interaction: discord.Interaction, event_name: str):
         await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
     event = events[event_name]
-    if interaction.user.id != event["creator"]:
+    if str(interaction.user.id) != event["creator"]:
         await interaction.followup.send("❌ Chỉ người tạo sự kiện mới có thể rút thăm.", ephemeral=False)
         return
-    all_entries = [(uid, num) for uid, e in event["entries"].items() for num in (e["numbers"] if isinstance(e, dict) else e)]
+    all_entries = [(uid, n) for uid, e in event["entries"].items() for n in e["numbers"]]
     if len(all_entries) < event["num_winners"]:
         await interaction.followup.send("❌ Không đủ người tham gia để rút thăm.", ephemeral=False)
         return
     winners = random.sample(all_entries, event["num_winners"])
-    result = "\n".join([f"<@{uid}> với số `{num}`" for uid, num in winners])
+    result = "\n".join([f"**{events[event_name]['entries'][uid]['name']}** với số `{num}`" for uid, num in winners])
     await interaction.followup.send(f"🏆 **Người thắng cuộc của `{event_name}`:**\n{result}", ephemeral=False)
     del events[event_name]
     save_events()
@@ -197,42 +187,50 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     if event_name not in events:
         await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
-    if interaction.user.id != events[event_name]["creator"]:
+    if str(interaction.user.id) != events[event_name]["creator"]:
         await interaction.followup.send("❌ Chỉ người tạo sự kiện mới có thể hủy.", ephemeral=False)
         return
     del events[event_name]
     save_events()
     await interaction.followup.send(f"🚫 Sự kiện `{event_name}` đã bị hủy.", ephemeral=False)
-@bot.tree.command(name="add_mem", description="Thêm người vào sự kiện với tên ingame và số")
-@app_commands.describe(event_name="Tên sự kiện", ingame_name="Tên ingame người dùng cần thêm", number="Số bạn chọn")
+
+# Kiểm tra người dùng có role MOD
+def is_mod(member: discord.Member) -> bool:
+    return any(role.name == "MOD" for role in member.roles)
+
+# Lệnh thêm người (add_mem) – chỉ MOD
+@bot.tree.command(name="add_mem", description="Thêm người vào sự kiện với tên ingame và số (chỉ MOD)")
+@app_commands.describe(event_name="Tên sự kiện", ingame_name="Tên ingame người dùng", number="Số bạn chọn")
 async def add_mem(interaction: discord.Interaction, event_name: str, ingame_name: str, number: int):
     await interaction.response.defer()
-
-    # Kiểm tra nếu sự kiện đã tồn tại
+    if not is_mod(interaction.user):
+        await interaction.followup.send("❌ Lệnh này chỉ dành cho MOD.", ephemeral=True)
+        return
     if event_name not in events:
         await interaction.followup.send("❌ Sự kiện không tồn tại.", ephemeral=False)
         return
-
-    # Tìm người chơi theo tên ingame
-    # MOD có thể thêm người chơi vào sự kiện bằng tên ingame
-    # Ở đây, sẽ không tìm kiếm theo Discord mà chỉ ghi nhận tên ingame
-    member_id = str(ingame_name)  # Sử dụng tên ingame làm ID cho sự kiện
-
-    # Kiểm tra nếu số đã chọn chưa được chọn
-    if number in [n for e in events[event_name]["entries"].values() for n in e]:
+    if number in [n for e in events[event_name]["entries"].values() for n in e["numbers"]]:
         await interaction.followup.send("❌ Số đã được người khác chọn.", ephemeral=False)
         return
-    
-    # Thêm người chơi vào danh sách đăng ký
-    event = events[event_name]
-    entries = event["entries"].setdefault(member_id, [])
-    entries.append(number)
-
-    # Lưu sự kiện sau khi thay đổi
+    entries = events[event_name]["entries"].setdefault(ingame_name, {"name": ingame_name, "numbers": []})
+    entries["numbers"].append(number)
     save_events()
     await interaction.followup.send(f"✅ {ingame_name} đã được thêm vào sự kiện `{event_name}` với số `{number}`!", ephemeral=False)
 
-
+# Lệnh xóa toàn bộ dữ liệu (chỉ MOD)
+@bot.tree.command(name="clear_all_data", description="Xóa toàn bộ dữ liệu sự kiện (chỉ MOD)")
+async def clear_all_data(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not is_mod(interaction.user):
+        await interaction.followup.send("❌ Lệnh này chỉ dành cho MOD.", ephemeral=True)
+        return
+    events.clear()
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM entries;")
+            cur.execute("DELETE FROM events;")
+        conn.commit()
+    await interaction.followup.send("🗑️ Tất cả dữ liệu đã bị xóa hoàn toàn!", ephemeral=False)
 # Flask keep-alive for Render
 app = Flask('')
 

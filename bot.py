@@ -272,6 +272,33 @@ async def list_events(interaction: discord.Interaction):
     event_list = "\n".join([f"- `{name}` with {info['num_winners']} winner(s)" for name, info in events.items()])
     await interaction.followup.send(f"📅 Current events:\n{event_list}", ephemeral=False)
 
+@bot.tree.command(name="remove_user_by_name", description="(MOD only) Remove a user and their numbers from an event by display name or ingame name")
+@app_commands.describe(event_name="Event name", display_name="User's display/ingame name (case-sensitive)")
+async def remove_user_by_name(interaction: discord.Interaction, event_name: str, display_name: str):
+    await interaction.response.defer()
+    if not is_mod(interaction.user):
+        await interaction.followup.send("❌ This command is for MODs only.", ephemeral=True)
+        return
+    if event_name not in events:
+        await interaction.followup.send("❌ Event does not exist.", ephemeral=False)
+        return
+
+    event = events[event_name]
+    to_remove = None
+    for user_id, entry in event["entries"].items():
+        if entry["name"] == display_name:
+            to_remove = user_id
+            break
+
+    if not to_remove:
+        await interaction.followup.send(f"❌ No one named `{display_name}` found in `{event_name}`.", ephemeral=False)
+        return
+
+    del event["entries"][to_remove]
+    save_events()
+    await interaction.followup.send(f"🗑️ Removed `{display_name}` and all their numbers from `{event_name}`.", ephemeral=False)
+
+
 @bot.tree.command(name="help", description="List all bot commands")
 async def help_command(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -285,6 +312,7 @@ async def help_command(interaction: discord.Interaction):
 /cancel_event - Cancel an event
 /add_mem - Add user and numbers (MOD only)
 /clear_all_data - Clear all event data (MOD only)
+/remove_user_by_name – (MOD only) Remove user from an event using display/ingame name
 /help - Show this help message
 """
     await interaction.followup.send(commands_list, ephemeral=False)

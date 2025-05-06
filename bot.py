@@ -298,11 +298,26 @@ async def remove_user_by_name(interaction: discord.Interaction, event_name: str,
     save_events()
     await interaction.followup.send(f"🗑️ Removed `{display_name}` and all their numbers from `{event_name}`.", ephemeral=False)
 
+@bot.tree.command(name="delete_channels", description="Xóa tất cả các kênh trong server")
+@app_commands.checks.has_permissions(administrator=True)
+async def delete_channels(interaction: discord.Interaction):
+    await interaction.response.send_message("🔄 Đang xóa các kênh...")
+
+    for channel in interaction.guild.channels:
+        try:
+            await channel.delete()
+            print(f"Đã xóa: {channel.name}")
+        except Exception as e:
+            print(f"Lỗi khi xóa {channel.name}: {e}")
+    
+    await interaction.followup.send("✅ Tất cả các kênh đã bị xóa.")
+
 
 @bot.tree.command(name="help", description="List all bot commands")
 async def help_command(interaction: discord.Interaction):
     await interaction.response.defer()
     commands_list = """
+
 📘 **Available Commands:**
 /create_event - Create a lucky draw event
 /register - Register numbers for an event

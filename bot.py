@@ -298,9 +298,16 @@ async def remove_user_by_name(interaction: discord.Interaction, event_name: str,
     save_events()
     await interaction.followup.send(f"🗑️ Removed `{display_name}` and all their numbers from `{event_name}`.", ephemeral=False)
 
+# Slash command để xóa tất cả các kênh (có xác nhận)
 @bot.tree.command(name="delete_channels", description="Xóa tất cả các kênh trong server")
-@app_commands.checks.has_permissions(administrator=True)
 async def delete_channels(interaction: discord.Interaction):
+    # Yêu cầu xác nhận từ người dùng
+    await interaction.response.send_message("⚠️ Lệnh này sẽ xóa tất cả các kênh trong server. Gõ `/delete_channels confirm` để xác nhận.")
+
+# Slash command để xác nhận xóa kênh
+@bot.tree.command(name="delete_channels_confirm", description="Xác nhận xóa tất cả các kênh trong server")
+async def delete_channels_confirm(interaction: discord.Interaction):
+    # Xóa tất cả các kênh
     await interaction.response.send_message("🔄 Đang xóa các kênh...")
 
     for channel in interaction.guild.channels:

@@ -73,7 +73,10 @@ def save_events():
                     SET creator_id = EXCLUDED.creator_id, num_winners = EXCLUDED.num_winners;
                 """, (event_name, event["creator"], event["num_winners"]))
 
-            cur.execute("DELETE FROM entries WHERE event_name NOT IN %s;", (tuple(events.keys()),))
+            if events:
+                cur.execute("DELETE FROM entries WHERE event_name NOT IN %s;", (tuple(events.keys()),))
+            else:
+                cur.execute("DELETE FROM entries;")
 
             for event_name, event in events.items():
                 for user_id, entry in event["entries"].items():
@@ -94,11 +97,9 @@ async def on_ready():
     await bot.tree.sync()
     print(f"✅ Bot is ready as {bot.user}")
 
-def get_max_entries(member: discord.Member) -> int:
-    for i in range(10, 0, -1):
-        if discord.utils.get(member.roles, name=f"{ROLE_PREFIX}{i}"):
-            return i
-    return 0
+# Check if user is MOD
+def is_mod(member: discord.Member) -> bool:
+    return any(role.name == "MOD" for role in member.roles)
 
 @bot.tree.command(name="create_event", description="Create a lucky draw event")
 @app_commands.describe(event_name="Event name", num_winners="Number of winners")
@@ -125,33 +126,40 @@ async def register(interaction: discord.Interaction, event_name: str, numbers: s
         await interaction.followup.send("❌ Event not found.", ephemeral=False)
         return
 
-    # 2. Kiểm tra Role đặc quyền "War-Member"
-    has_role = discord.utils.get(member.roles, name=REQUIRED_ROLE_NAME)
-    if not has_role:
-        await interaction.followup.send(f"❌ Bạn cần có role `{REQUIRED_ROLE_NAME}` mới được tham gia đăng ký số.", ephemeral=False)
+    # Parse numbers input
+    try:
+        chosen_numbers = [int(n.strip()) for n in numbers.split(",")]
+    except ValueError:
+        await interaction.followup.send("❌ Định dạng số không hợp lệ. Vui lòng nhập các số cách nhau bằng dấu phẩy (VD: 12, 34).", ephemeral=False)
         return
 
-    # 3. Kiểm tra giới hạn giá trị số
-    if number < 0 or number > 9999:
+    # Kiểm tra giới hạn giá trị số (0 - 9999)
+    if any(n < 0 or n > 9999 for n in chosen_numbers):
         await interaction.followup.send("❌ Chỉ cho phép chọn số từ 0 đến 9999.", ephemeral=False)
         return
 
     event = events[event_name]
     user_id_str = str(member.id)
 
-    # 4. Kiểm tra xem người dùng này ĐÃ đăng ký số nào chưa (Giới hạn 1 người / 1 số)
+    # Kiểm tra xem người dùng đã đăng ký số nào chưa (Giới hạn mỗi người 1 số tùy logic cũ của bạn)
     if user_id_str in event["entries"] and len(event["entries"][user_id_str]["numbers"]) >= 1:
         current_number = event["entries"][user_id_str]["numbers"][0]
         await interaction.followup.send(f"❌ Bạn đã đăng ký số `{current_number}` trước đó rồi. Mỗi người chỉ được chọn 1 số duy nhất!", ephemeral=False)
         return
 
-    # 5. Kiểm tra xem con số này ĐÃ có ai khác chọn chưa (Chống trùng số)
-    all_taken_numbers = [n for entry_data in event["entries"].values() for n in entry_data["numbers"]]
-    if number in all_taken_numbers:
-        await interaction.followup.send(f"❌ Số `{number}` đã có người khác đăng ký trước. Vui lòng chọn một số khác!", ephemeral=False)
+    if len(chosen_numbers) > 1:
+        await interaction.followup.send("❌ Bạn chỉ được phép đăng ký 1 số duy nhất cho sự kiện này.", ephemeral=False)
         return
 
-    # 6. Hợp lệ -> Tiến hành lưu vào bộ nhớ và Database
+    number = chosen_numbers[0]
+
+    # Kiểm tra xem con số này đã có ai khác chọn chưa (Chống trùng số)
+    all_taken_numbers = [n for entry_data in event["entries"].values() for n in entry_data["numbers"]]
+    if number in all_taken_numbers:
+        await interaction.followup.send(f"❌ Số `{number}` đã có người khác đăng ký trước. Vui lòng chọn số khác!", ephemeral=False)
+        return
+
+    # Lưu vào bộ nhớ và Database
     entries = event["entries"].setdefault(user_id_str, {"name": member.display_name, "numbers": []})
     entries["numbers"].append(number)
     
@@ -211,10 +219,6 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     save_events()
     await interaction.followup.send(f"🚫 Event `{event_name}` has been canceled.", ephemeral=False)
 
-# Check if user is MOD
-def is_mod(member: discord.Member) -> bool:
-    return any(role.name == "MOD" for role in member.roles)
-
 @bot.tree.command(name="add_mem", description="Add a user to event manually (MOD only)")
 @app_commands.describe(event_name="Event name", ingame_name="In-game name", numbers="Numbers (comma-separated)")
 async def add_mem(interaction: discord.Interaction, event_name: str, ingame_name: str, numbers: str):
@@ -272,8 +276,8 @@ async def list_events(interaction: discord.Interaction):
     event_list = "\n".join([f"- `{name}` with {info['num_winners']} winner(s)" for name, info in events.items()])
     await interaction.followup.send(f"📅 Current events:\n{event_list}", ephemeral=False)
 
-@bot.tree.command(name="remove_user_by_name", description="(MOD only) Remove a user and their numbers from an event by display name or ingame name")
-@app_commands.describe(event_name="Event name", display_name="User's display/ingame name (case-sensitive)")
+@bot.tree.command(name="remove_user_by_name", description="(MOD only) Remove a user and their numbers from an event")
+@app_commands.describe(event_name="Event name", display_name="User's display/ingame name")
 async def remove_user_by_name(interaction: discord.Interaction, event_name: str, display_name: str):
     await interaction.response.defer()
     if not is_mod(interaction.user):
@@ -298,33 +302,31 @@ async def remove_user_by_name(interaction: discord.Interaction, event_name: str,
     save_events()
     await interaction.followup.send(f"🗑️ Removed `{display_name}` and all their numbers from `{event_name}`.", ephemeral=False)
 
-# Slash command để xóa tất cả các kênh (có xác nhận)
-@bot.tree.command(name="delete_channels", description="Xóa tất cả các kênh trong server")
+@bot.tree.command(name="delete_channels", description="Xóa tất cả các kênh trong server (Admin only)")
 async def delete_channels(interaction: discord.Interaction):
-    # Yêu cầu xác nhận từ người dùng
-    await interaction.response.send_message("⚠️ Lệnh này sẽ xóa tất cả các kênh trong server. Gõ `/delete_channels confirm` để xác nhận.")
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Bạn cần quyền Administrator để dùng lệnh này.", ephemeral=True)
+        return
+    await interaction.response.send_message("⚠️ Lệnh này cực kỳ nguy hiểm. Gõ `/delete_channels_confirm` để xác nhận xóa sạch kênh.")
 
-# Slash command để xác nhận xóa kênh
 @bot.tree.command(name="delete_channels_confirm", description="Xác nhận xóa tất cả các kênh trong server")
 async def delete_channels_confirm(interaction: discord.Interaction):
-    # Xóa tất cả các kênh
-    await interaction.response.send_message("🔄 Đang xóa các kênh...")
-
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Bạn cần quyền Administrator để dùng lệnh này.", ephemeral=True)
+        return
+    
+    await interaction.response.send_message("🔄 Đang tiến hành xóa tất cả các kênh...")
     for channel in interaction.guild.channels:
         try:
             await channel.delete()
             print(f"Đã xóa: {channel.name}")
         except Exception as e:
             print(f"Lỗi khi xóa {channel.name}: {e}")
-    
-    await interaction.followup.send("✅ Tất cả các kênh đã bị xóa.")
-
 
 @bot.tree.command(name="help", description="List all bot commands")
 async def help_command(interaction: discord.Interaction):
     await interaction.response.defer()
     commands_list = """
-
 📘 **Available Commands:**
 /create_event - Create a lucky draw event
 /register - Register numbers for an event
@@ -334,7 +336,7 @@ async def help_command(interaction: discord.Interaction):
 /cancel_event - Cancel an event
 /add_mem - Add user and numbers (MOD only)
 /clear_all_data - Clear all event data (MOD only)
-/remove_user_by_name – (MOD only) Remove user from an event using display/ingame name
+/remove_user_by_name – (MOD only) Remove user from an event
 /help - Show this help message
 """
     await interaction.followup.send(commands_list, ephemeral=False)
@@ -352,5 +354,4 @@ def run():
 Thread(target=run).start()
 
 if __name__ == "__main__":
-    init_db()
     bot.run(TOKEN)

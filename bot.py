@@ -126,14 +126,12 @@ async def register(interaction: discord.Interaction, event_name: str, numbers: s
         await interaction.followup.send("❌ Event not found.", ephemeral=False)
         return
 
-    # Parse numbers input
     try:
         chosen_numbers = [int(n.strip()) for n in numbers.split(",")]
     except ValueError:
         await interaction.followup.send("❌ Định dạng số không hợp lệ. Vui lòng nhập các số cách nhau bằng dấu phẩy (VD: 12, 34).", ephemeral=False)
         return
 
-    # Kiểm tra giới hạn giá trị số (0 - 9999)
     if any(n < 0 or n > 9999 for n in chosen_numbers):
         await interaction.followup.send("❌ Chỉ cho phép chọn số từ 0 đến 9999.", ephemeral=False)
         return
@@ -141,7 +139,6 @@ async def register(interaction: discord.Interaction, event_name: str, numbers: s
     event = events[event_name]
     user_id_str = str(member.id)
 
-    # Kiểm tra xem người dùng đã đăng ký số nào chưa (Giới hạn mỗi người 1 số tùy logic cũ của bạn)
     if user_id_str in event["entries"] and len(event["entries"][user_id_str]["numbers"]) >= 1:
         current_number = event["entries"][user_id_str]["numbers"][0]
         await interaction.followup.send(f"❌ Bạn đã đăng ký số `{current_number}` trước đó rồi. Mỗi người chỉ được chọn 1 số duy nhất!", ephemeral=False)
@@ -153,13 +150,11 @@ async def register(interaction: discord.Interaction, event_name: str, numbers: s
 
     number = chosen_numbers[0]
 
-    # Kiểm tra xem con số này đã có ai khác chọn chưa (Chống trùng số)
     all_taken_numbers = [n for entry_data in event["entries"].values() for n in entry_data["numbers"]]
     if number in all_taken_numbers:
         await interaction.followup.send(f"❌ Số `{number}` đã có người khác đăng ký trước. Vui lòng chọn số khác!", ephemeral=False)
         return
 
-    # Lưu vào bộ nhớ và Database
     entries = event["entries"].setdefault(user_id_str, {"name": member.display_name, "numbers": []})
     entries["numbers"].append(number)
     
@@ -218,6 +213,22 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     del events[event_name]
     save_events()
     await interaction.followup.send(f"🚫 Event `{event_name}` has been canceled.", ephemeral=False)
+
+@bot.tree.command(name="find_lucky_mem", description="Find a random lucky member who has a specific role (MOD only)")
+@app_commands.describe(role="Chọn role cần quay thưởng ngẫu nhiên")
+async def find_lucky_mem(interaction: discord.Interaction, role: discord.Role):
+    await interaction.response.defer()
+    if not is_mod(interaction.user):
+        await interaction.followup.send("❌ Lệnh này chỉ dành cho MOD.", ephemeral=True)
+        return
+
+    members = role.members
+    if not members:
+        await interaction.followup.send(f"❌ Không tìm thấy thành viên nào sở hữu role `{role.name}`.", ephemeral=False)
+        return
+
+    winner = random.choice(members)
+    await interaction.followup.send(f"🎉 Chúc mừng! Người may mắn sở hữu role `{role.name}` được chọn là: {winner.mention} (`{winner.display_name}`)", ephemeral=False)
 
 @bot.tree.command(name="add_mem", description="Add a user to event manually (MOD only)")
 @app_commands.describe(event_name="Event name", ingame_name="In-game name", numbers="Numbers (comma-separated)")
@@ -334,6 +345,7 @@ async def help_command(interaction: discord.Interaction):
 /list_events - List all available events
 /draw_winners - Draw winners from an event
 /cancel_event - Cancel an event
+/find_lucky_mem - Find a random member with a specific role (MOD only)
 /add_mem - Add user and numbers (MOD only)
 /clear_all_data - Clear all event data (MOD only)
 /remove_user_by_name – (MOD only) Remove user from an event

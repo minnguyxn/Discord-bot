@@ -99,7 +99,7 @@ async def on_ready():
 
 # Check if user is MOD
 def is_mod(member: discord.Member) -> bool:
-    return any(role.name == "MOD" for role in member.roles)
+    return any(role.name == "R4" for role in member.roles)
 
 @bot.tree.command(name="create_event", description="Create a lucky draw event")
 @app_commands.describe(event_name="Event name", num_winners="Number of winners")

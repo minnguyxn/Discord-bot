@@ -125,38 +125,38 @@ async def register(interaction: discord.Interaction, event_name: str, numbers: s
         await interaction.followup.send("❌ Event not found.", ephemeral=False)
         return
 
-    max_allowed = get_max_entries(member)
-    if max_allowed == 0:
-        await interaction.followup.send("❌ You do not have a valid role (V1–V10).", ephemeral=False)
+    # 2. Kiểm tra Role đặc quyền "War-Member"
+    has_role = discord.utils.get(member.roles, name=REQUIRED_ROLE_NAME)
+    if not has_role:
+        await interaction.followup.send(f"❌ Bạn cần có role `{REQUIRED_ROLE_NAME}` mới được tham gia đăng ký số.", ephemeral=False)
         return
 
-    try:
-        chosen_numbers = [int(n.strip()) for n in numbers.split(",")]
-    except ValueError:
-        await interaction.followup.send("❌ Invalid number list. Use commas to separate numbers.", ephemeral=False)
-        return
-
-    if any(n < 0 or n > 9999 for n in chosen_numbers):
-        await interaction.followup.send("❌ Only numbers between 0 and 9999 are allowed.", ephemeral=False)
+    # 3. Kiểm tra giới hạn giá trị số
+    if number < 0 or number > 9999:
+        await interaction.followup.send("❌ Chỉ cho phép chọn số từ 0 đến 9999.", ephemeral=False)
         return
 
     event = events[event_name]
-    all_numbers = [n for e in event["entries"].values() for n in e["numbers"]]
-    entries = event["entries"].setdefault(str(member.id), {"name": member.display_name, "numbers": []})
+    user_id_str = str(member.id)
 
-    available_slots = max_allowed - len(entries["numbers"])
-    new_numbers = [n for n in chosen_numbers if n not in all_numbers]
-    if not new_numbers:
-        await interaction.followup.send("❌ All chosen numbers are already taken.", ephemeral=False)
+    # 4. Kiểm tra xem người dùng này ĐÃ đăng ký số nào chưa (Giới hạn 1 người / 1 số)
+    if user_id_str in event["entries"] and len(event["entries"][user_id_str]["numbers"]) >= 1:
+        current_number = event["entries"][user_id_str]["numbers"][0]
+        await interaction.followup.send(f"❌ Bạn đã đăng ký số `{current_number}` trước đó rồi. Mỗi người chỉ được chọn 1 số duy nhất!", ephemeral=False)
         return
 
-    if len(new_numbers) > available_slots:
-        await interaction.followup.send(f"❌ You can only choose {available_slots} more number(s).", ephemeral=False)
+    # 5. Kiểm tra xem con số này ĐÃ có ai khác chọn chưa (Chống trùng số)
+    all_taken_numbers = [n for entry_data in event["entries"].values() for n in entry_data["numbers"]]
+    if number in all_taken_numbers:
+        await interaction.followup.send(f"❌ Số `{number}` đã có người khác đăng ký trước. Vui lòng chọn một số khác!", ephemeral=False)
         return
 
-    entries["numbers"].extend(new_numbers)
+    # 6. Hợp lệ -> Tiến hành lưu vào bộ nhớ và Database
+    entries = event["entries"].setdefault(user_id_str, {"name": member.display_name, "numbers": []})
+    entries["numbers"].append(number)
+    
     save_events()
-    await interaction.followup.send(f"✅ {member.mention} registered: `{', '.join(map(str, new_numbers))}`", ephemeral=False)
+    await interaction.followup.send(f"✅ {member.mention} đã đăng ký thành công số: `{number}`", ephemeral=False)
 
 @bot.tree.command(name="list_entries", description="List all registered numbers for an event")
 @app_commands.describe(event_name="Event name")

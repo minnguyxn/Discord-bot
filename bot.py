@@ -214,9 +214,9 @@ async def cancel_event(interaction: discord.Interaction, event_name: str):
     save_events()
     await interaction.followup.send(f"🚫 Event `{event_name}` has been canceled.", ephemeral=False)
 
-@bot.tree.command(name="find_lucky_mem", description="Find a random lucky member who has a specific role (MOD only)")
-@app_commands.describe(role="Chọn role cần quay thưởng ngẫu nhiên")
-async def find_lucky_mem(interaction: discord.Interaction, role: discord.Role):
+@bot.tree.command(name="find_lucky_mem", description="Randomly pick lucky winners from a specific role (MOD only)")
+@app_commands.describe(role="Chọn role cần quay thưởng", count="Số lượng người thắng cuộc cần tìm")
+async def find_lucky_mem(interaction: discord.Interaction, role: discord.Role, count: int):
     await interaction.response.defer()
     if not is_mod(interaction.user):
         await interaction.followup.send("❌ Lệnh này chỉ dành cho MOD.", ephemeral=True)
@@ -227,8 +227,18 @@ async def find_lucky_mem(interaction: discord.Interaction, role: discord.Role):
         await interaction.followup.send(f"❌ Không tìm thấy thành viên nào sở hữu role `{role.name}`.", ephemeral=False)
         return
 
-    winner = random.choice(members)
-    await interaction.followup.send(f"🎉 Chúc mừng! Người may mắn sở hữu role `{role.name}` được chọn là: {winner.mention} (`{winner.display_name}`)", ephemeral=False)
+    if count <= 0:
+        await interaction.followup.send("❌ Số lượng người thắng phải lớn hơn 0.", ephemeral=False)
+        return
+
+    if len(members) < count:
+        await interaction.followup.send(f"❌ Số lượng thành viên có role `{role.name}` chỉ có {len(members)} người, ít hơn số lượng cần tìm ({count}).", ephemeral=False)
+        return
+
+    winners = random.sample(members, count)
+    winners_list = "\n".join([f"- {winner.mention} (`{winner.display_name}`)" for winner in winners])
+    
+    await interaction.followup.send(f"🎉 **Danh sách {count} người may mắn sở hữu role `{role.name}`:**\n{winners_list}", ephemeral=False)
 
 @bot.tree.command(name="add_mem", description="Add a user to event manually (MOD only)")
 @app_commands.describe(event_name="Event name", ingame_name="In-game name", numbers="Numbers (comma-separated)")
@@ -345,7 +355,7 @@ async def help_command(interaction: discord.Interaction):
 /list_events - List all available events
 /draw_winners - Draw winners from an event
 /cancel_event - Cancel an event
-/find_lucky_mem - Find a random member with a specific role (MOD only)
+/find_lucky_mem - Pick random winners from a specific role (MOD only)
 /add_mem - Add user and numbers (MOD only)
 /clear_all_data - Clear all event data (MOD only)
 /remove_user_by_name – (MOD only) Remove user from an event
